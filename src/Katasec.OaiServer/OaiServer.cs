@@ -12,12 +12,31 @@ public sealed class OaiServer(IChatClient chatClient, ISessionStore sessionStore
 {
     private const string SessionHeader = "X-Session-Id";
 
-    // Registers /v1/chat/completions on the given WebApplication
+    // Registers /v1/chat/completions and /v1/models on the given WebApplication
     public void Map(WebApplication app)
     {
         // Explicit RequestDelegate cast is AOT-safe — no parameter reflection needed
         app.MapPost("/v1/chat/completions",
             (RequestDelegate)(ctx => HandleAsync(ctx, ctx.RequestAborted)));
+
+        app.MapGet("/v1/models",
+            (RequestDelegate)(ctx => HandleModelsAsync(ctx, ctx.RequestAborted)));
+    }
+
+    private async Task HandleModelsAsync(HttpContext ctx, CancellationToken ct)
+    {
+        var response = new OaiModelsListResponse(
+            Object: "list",
+            Data:   [new OaiModelInfo(
+                Id:       agentId,
+                Object:   "model",
+                Created:  DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
+                OwnedBy:  "forge")]);
+
+        ctx.Response.ContentType = "application/json";
+        await ctx.Response.WriteAsync(
+            JsonSerializer.Serialize(response, OaiJsonContext.Default.OaiModelsListResponse),
+            ct);
     }
 
     private async Task HandleAsync(HttpContext ctx, CancellationToken ct)

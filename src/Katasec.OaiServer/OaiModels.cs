@@ -1,6 +1,19 @@
 namespace Katasec.OaiServer;
 
 // ---------------------------------------------------------------------------
+// Outbound — /v1/models response
+
+public record OaiModelsListResponse(
+    string Object,
+    List<OaiModelInfo> Data);
+
+public record OaiModelInfo(
+    string Id,
+    string Object,
+    long Created,
+    string OwnedBy);
+
+// ---------------------------------------------------------------------------
 // Inbound — /v1/chat/completions request
 
 public record OaiRequest(
