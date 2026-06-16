@@ -4,6 +4,7 @@ using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 
 namespace Katasec.OaiServer;
 
@@ -96,6 +97,11 @@ public sealed class OaiServer(IChatClient chatClient, ISessionStore sessionStore
         var builder = WebApplication.CreateSlimBuilder();
         builder.Services.ConfigureHttpJsonOptions(o =>
             o.SerializerOptions.TypeInfoResolverChain.Insert(0, OaiJsonContext.Default));
+
+        // Suppress ASP.NET Core infrastructure logs — the caller (forge serve)
+        // prints its own startup banner and handles errors with clean messages.
+        builder.Logging.AddFilter("Microsoft", LogLevel.None);
+        builder.Logging.AddFilter("System", LogLevel.None);
 
         builder.WebHost.UseSetting("urls", $"http://0.0.0.0:{port}");
 
