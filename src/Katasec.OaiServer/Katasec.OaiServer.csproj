@@ -1,0 +1,31 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <IsAotCompatible>true</IsAotCompatible>
+
+    <!-- NuGet -->
+    <PackageId>Katasec.OaiServer</PackageId>
+    <Version>0.0.0-dev</Version>
+    <Authors>katasec</Authors>
+    <Description>AOT-safe .NET OpenAI-compatible server — expose any IChatClient as a /v1/chat/completions endpoint</Description>
+    <PackageTags>openai;oai;chat;completions;server;aot;native-aot</PackageTags>
+    <RepositoryUrl>https://github.com/katasec/oai-server-dotnet</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <PackageLicenseExpression>Apache-2.0</PackageLicenseExpression>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <GeneratePackageOnBuild>false</GeneratePackageOnBuild>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <None Include="../../README.md" Pack="true" PackagePath="/" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+    <PackageReference Include="Microsoft.Extensions.AI.Abstractions" Version="9.5.0" />
+  </ItemGroup>
+
+</Project>

@@ -1,0 +1,8 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/Katasec.OaiServer/Katasec.OaiServer.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/Katasec.OaiServer.Tests/Katasec.OaiServer.Tests.csproj" />
+  </Folder>
+</Solution>
