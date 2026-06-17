@@ -19,9 +19,30 @@ public record OaiModelInfo(
 public record OaiRequest(
     string Model,
     List<OaiMessage> Messages,
-    bool Stream = true);
+    bool Stream = false);
 
 public record OaiMessage(string Role, string Content);
+
+// ---------------------------------------------------------------------------
+// Outbound — non-streaming /v1/chat/completions response
+
+public record OaiCompletion(
+    string Id,
+    string Object,
+    long Created,
+    string Model,
+    List<OaiCompletionChoice> Choices,
+    OaiUsage Usage);
+
+public record OaiCompletionChoice(
+    int Index,
+    OaiMessage Message,
+    string FinishReason);
+
+public record OaiUsage(
+    int PromptTokens,
+    int CompletionTokens,
+    int TotalTokens);
 
 // ---------------------------------------------------------------------------
 // Outbound — streaming SSE chunks

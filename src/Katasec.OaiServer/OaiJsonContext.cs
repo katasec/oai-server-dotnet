@@ -15,4 +15,8 @@ namespace Katasec.OaiServer;
 [JsonSerializable(typeof(OaiModelsListResponse))]
 [JsonSerializable(typeof(OaiModelInfo))]
 [JsonSerializable(typeof(List<OaiModelInfo>))]
+[JsonSerializable(typeof(OaiCompletion))]
+[JsonSerializable(typeof(OaiCompletionChoice))]
+[JsonSerializable(typeof(List<OaiCompletionChoice>))]
+[JsonSerializable(typeof(OaiUsage))]
 internal partial class OaiJsonContext : JsonSerializerContext { }

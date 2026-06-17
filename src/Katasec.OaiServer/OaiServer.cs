@@ -61,14 +61,8 @@ public sealed class OaiServer(IChatClient chatClient, ISessionStore sessionStore
         // Append incoming message to history
         session.History.Add(new OaiMessage("user", userMessage));
 
-        // --- Stream response
-        ctx.Response.Headers["Content-Type"]  = "text/event-stream";
-        ctx.Response.Headers["Cache-Control"] = "no-cache";
-        ctx.Response.Headers[SessionHeader]   = sessionId;
-
-        var responseId  = $"chatcmpl-{Guid.NewGuid():N}";
-        var created     = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
-        var fullReply   = new StringBuilder();
+        var responseId = $"chatcmpl-{Guid.NewGuid():N}";
+        var created    = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
 
         // Build chat history for the IChatClient
         var chatMessages = session.History
@@ -77,29 +71,72 @@ public sealed class OaiServer(IChatClient chatClient, ISessionStore sessionStore
                 m.Content))
             .ToList();
 
-        await foreach (var update in chatClient.GetStreamingResponseAsync(chatMessages, cancellationToken: ct))
+        ctx.Response.Headers[SessionHeader] = sessionId;
+
+        if (req.Stream)
         {
-            var text = update.Text ?? string.Empty;
-            fullReply.Append(text);
+            // --- Streaming SSE response
+            ctx.Response.Headers["Content-Type"]  = "text/event-stream";
+            ctx.Response.Headers["Cache-Control"] = "no-cache";
 
-            var chunk = new OaiChunk(
-                Id:         responseId,
-                Object:     "chat.completion.chunk",
-                Created:    created,
-                Model:      agentId,
-                Choices:    [new OaiChoice(0, new OaiDelta(null, text), null)]);
+            var fullReply = new StringBuilder();
 
-            var json = JsonSerializer.Serialize(chunk, OaiJsonContext.Default.OaiChunk);
-            await ctx.Response.WriteAsync($"data: {json}\n\n", ct);
+            await foreach (var update in chatClient.GetStreamingResponseAsync(chatMessages, cancellationToken: ct))
+            {
+                var text = update.Text ?? string.Empty;
+                fullReply.Append(text);
+
+                var chunk = new OaiChunk(
+                    Id:      responseId,
+                    Object:  "chat.completion.chunk",
+                    Created: created,
+                    Model:   agentId,
+                    Choices: [new OaiChoice(0, new OaiDelta(null, text), null)]);
+
+                var json = JsonSerializer.Serialize(chunk, OaiJsonContext.Default.OaiChunk);
+                await ctx.Response.WriteAsync($"data: {json}\n\n", ct);
+                await ctx.Response.Body.FlushAsync(ct);
+            }
+
+            // Final chunk with finish_reason before [DONE]
+            var finalChunk = new OaiChunk(
+                Id:      responseId,
+                Object:  "chat.completion.chunk",
+                Created: created,
+                Model:   agentId,
+                Choices: [new OaiChoice(0, new OaiDelta(null, null), "stop")]);
+            var finalJson = JsonSerializer.Serialize(finalChunk, OaiJsonContext.Default.OaiChunk);
+            await ctx.Response.WriteAsync($"data: {finalJson}\n\n", ct);
             await ctx.Response.Body.FlushAsync(ct);
+
+            await ctx.Response.WriteAsync("data: [DONE]\n\n", ct);
+            await ctx.Response.Body.FlushAsync(ct);
+
+            session.History.Add(new OaiMessage("assistant", fullReply.ToString()));
+        }
+        else
+        {
+            // --- Non-streaming JSON response
+            ctx.Response.ContentType = "application/json";
+
+            var chatResponse = await chatClient.GetResponseAsync(chatMessages, cancellationToken: ct);
+            var replyText    = chatResponse.Text ?? string.Empty;
+
+            var completion = new OaiCompletion(
+                Id:      responseId,
+                Object:  "chat.completion",
+                Created: created,
+                Model:   agentId,
+                Choices: [new OaiCompletionChoice(0, new OaiMessage("assistant", replyText), "stop")],
+                Usage:   new OaiUsage(0, 0, 0));
+
+            await ctx.Response.WriteAsync(
+                JsonSerializer.Serialize(completion, OaiJsonContext.Default.OaiCompletion), ct);
+
+            session.History.Add(new OaiMessage("assistant", replyText));
         }
 
-        // Final [DONE] sentinel
-        await ctx.Response.WriteAsync("data: [DONE]\n\n", ct);
-        await ctx.Response.Body.FlushAsync(ct);
-
         // --- Persist updated session
-        session.History.Add(new OaiMessage("assistant", fullReply.ToString()));
         await sessionStore.SaveAsync(session, ct);
     }
 
