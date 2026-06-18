@@ -8,7 +8,7 @@
 
     <!-- NuGet -->
     <PackageId>Katasec.OaiServer</PackageId>
-    <Version>0.0.0-dev</Version>
+    <Version>0.1.2</Version>
     <Authors>katasec</Authors>
     <Description>AOT-safe .NET OpenAI-compatible server — expose any IChatClient as a /v1/chat/completions endpoint</Description>
     <PackageTags>openai;oai;chat;completions;server;aot;native-aot</PackageTags>
