@@ -30,6 +30,10 @@ jobs:
             --configuration Release \
             -p:Version=${{ github.event.inputs.version }} \
             --output ./nupkg
+          dotnet pack src/Katasec.AnthropicServer/Katasec.AnthropicServer.csproj \
+            --configuration Release \
+            -p:Version=${{ github.event.inputs.version }} \
+            --output ./nupkg
 
       - name: Push to GitHub Packages
         run: |
