@@ -45,6 +45,29 @@ public record OaiUsage(
     int TotalTokens);
 
 // ---------------------------------------------------------------------------
+// Outbound — /v1/responses response
+
+public record OaiResponsesResponse(
+    string Id,
+    string Object,
+    string Status,
+    long CreatedAt,
+    string Model,
+    List<OaiResponseOutputMessage> Output);
+
+public record OaiResponseOutputMessage(
+    string Type,
+    string Id,
+    string Role,
+    List<OaiResponseOutputContent> Content);
+
+public record OaiResponseOutputContent(
+    string Type,
+    string Text,
+    List<string> Annotations,
+    List<string> Logprobs);
+
+// ---------------------------------------------------------------------------
 // Outbound — streaming SSE chunks
 
 public record OaiChunk(

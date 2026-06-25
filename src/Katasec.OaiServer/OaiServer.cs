@@ -21,6 +21,9 @@ public sealed class OaiServer(IChatClient chatClient, ISessionStore sessionStore
 
         app.MapGet("/v1/models",
             (RequestDelegate)(ctx => HandleModelsAsync(ctx, ctx.RequestAborted)));
+
+        app.MapPost("/v1/responses",
+            (RequestDelegate)(ctx => HandleResponsesAsync(ctx, ctx.RequestAborted)));
     }
 
     private async Task HandleModelsAsync(HttpContext ctx, CancellationToken ct)
@@ -80,18 +83,23 @@ public sealed class OaiServer(IChatClient chatClient, ISessionStore sessionStore
             ctx.Response.Headers["Cache-Control"] = "no-cache";
 
             var fullReply = new StringBuilder();
+            var firstChunk = true;
 
             await foreach (var update in chatClient.GetStreamingResponseAsync(chatMessages, cancellationToken: ct))
             {
                 var text = update.Text ?? string.Empty;
                 fullReply.Append(text);
 
+                // Spec requires role:"assistant" in the first chunk only; subsequent chunks omit it.
+                var role = firstChunk ? "assistant" : null;
+                firstChunk = false;
+
                 var chunk = new OaiChunk(
                     Id:      responseId,
                     Object:  "chat.completion.chunk",
                     Created: created,
                     Model:   agentId,
-                    Choices: [new OaiChoice(0, new OaiDelta(null, text), null)]);
+                    Choices: [new OaiChoice(0, new OaiDelta(role, text), null)]);
 
                 var json = JsonSerializer.Serialize(chunk, OaiJsonContext.Default.OaiChunk);
                 await ctx.Response.WriteAsync($"data: {json}\n\n", ct);
@@ -138,6 +146,76 @@ public sealed class OaiServer(IChatClient chatClient, ISessionStore sessionStore
 
         // --- Persist updated session
         await sessionStore.SaveAsync(session, ct);
+    }
+
+    private async Task HandleResponsesAsync(HttpContext ctx, CancellationToken ct)
+    {
+        using var doc = await JsonDocument.ParseAsync(ctx.Request.Body, cancellationToken: ct);
+        var root = doc.RootElement;
+
+        if (!root.TryGetProperty("input", out var inputElement))
+        {
+            ctx.Response.StatusCode = 400;
+            return;
+        }
+
+        var userText = inputElement.ValueKind switch
+        {
+            JsonValueKind.String => inputElement.GetString() ?? string.Empty,
+            JsonValueKind.Array  => ExtractUserText(inputElement),
+            _                    => string.Empty
+        };
+
+        var chatMessages = new List<ChatMessage> { new(ChatRole.User, userText) };
+        var chatResponse = await chatClient.GetResponseAsync(chatMessages, cancellationToken: ct);
+        var replyText    = chatResponse.Text ?? string.Empty;
+
+        var response = new OaiResponsesResponse(
+            Id:        $"resp_{Guid.NewGuid():N}",
+            Object:    "response",
+            Status:    "completed",
+            CreatedAt: DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
+            Model:     agentId,
+            Output:   [new OaiResponseOutputMessage(
+                Type:    "message",
+                Id:      $"msg_{Guid.NewGuid():N}",
+                Role:    "assistant",
+                Content: [new OaiResponseOutputContent(
+                    Type:        "output_text",
+                    Text:        replyText,
+                    Annotations: [],
+                    Logprobs:    [])])]);
+
+        ctx.Response.ContentType = "application/json";
+        await ctx.Response.WriteAsync(
+            JsonSerializer.Serialize(response, OaiJsonContext.Default.OaiResponsesResponse), ct);
+    }
+
+    // Walks the input array (reverse order) to find the last user message text.
+    private static string ExtractUserText(JsonElement inputArray)
+    {
+        foreach (var item in inputArray.EnumerateArray().Reverse())
+        {
+            if (!item.TryGetProperty("role", out var role) || role.GetString() != "user")
+                continue;
+
+            if (!item.TryGetProperty("content", out var content))
+                continue;
+
+            if (content.ValueKind == JsonValueKind.String)
+                return content.GetString() ?? string.Empty;
+
+            if (content.ValueKind == JsonValueKind.Array)
+            {
+                foreach (var part in content.EnumerateArray())
+                {
+                    if (part.TryGetProperty("type", out var type) && type.GetString() == "input_text"
+                        && part.TryGetProperty("text", out var text))
+                        return text.GetString() ?? string.Empty;
+                }
+            }
+        }
+        return string.Empty;
     }
 
     // Convenience: build and run the server from just an IChatClient
