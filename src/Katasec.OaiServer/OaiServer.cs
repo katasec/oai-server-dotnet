@@ -166,29 +166,92 @@ public sealed class OaiServer(IChatClient chatClient, ISessionStore sessionStore
             _                    => string.Empty
         };
 
-        var chatMessages = new List<ChatMessage> { new(ChatRole.User, userText) };
-        var chatResponse = await chatClient.GetResponseAsync(chatMessages, cancellationToken: ct);
-        var replyText    = chatResponse.Text ?? string.Empty;
+        var isStreaming = root.TryGetProperty("stream", out var streamProp)
+            && streamProp.ValueKind == JsonValueKind.True;
 
-        var response = new OaiResponsesResponse(
-            Id:        $"resp_{Guid.NewGuid():N}",
+        var chatMessages = new List<ChatMessage> { new(ChatRole.User, userText) };
+
+        if (isStreaming)
+        {
+            ctx.Response.Headers["Content-Type"]  = "text/event-stream";
+            ctx.Response.Headers["Cache-Control"] = "no-cache";
+
+            var responseId = $"resp_{Guid.NewGuid():N}";
+            var msgId      = $"msg_{Guid.NewGuid():N}";
+            var created    = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+            var fullReply  = new StringBuilder();
+            var seq        = 0;
+
+            // response.created — status in_progress, empty output
+            var inProgressResponse = BuildResponsesResponse(responseId, "in_progress", created, msgId, string.Empty);
+            await WriteSseEventAsync(ctx, "response.created",
+                JsonSerializer.Serialize(new OaiResponsesCreatedEvent("response.created", seq++, inProgressResponse),
+                    OaiJsonContext.Default.OaiResponsesCreatedEvent), ct);
+
+            // response.output_text.delta — one event per streaming chunk
+            await foreach (var update in chatClient.GetStreamingResponseAsync(chatMessages, cancellationToken: ct))
+            {
+                var delta = update.Text ?? string.Empty;
+                fullReply.Append(delta);
+
+                await WriteSseEventAsync(ctx, "response.output_text.delta",
+                    JsonSerializer.Serialize(new OaiResponsesOutputTextDeltaEvent(
+                        "response.output_text.delta", seq++, msgId, 0, 0, delta),
+                        OaiJsonContext.Default.OaiResponsesOutputTextDeltaEvent), ct);
+            }
+
+            var fullText = fullReply.ToString();
+
+            // response.output_text.done — assembled text
+            await WriteSseEventAsync(ctx, "response.output_text.done",
+                JsonSerializer.Serialize(new OaiResponsesOutputTextDoneEvent(
+                    "response.output_text.done", seq++, msgId, 0, 0, fullText),
+                    OaiJsonContext.Default.OaiResponsesOutputTextDoneEvent), ct);
+
+            // response.completed — final response with status=completed and full output
+            var completedResponse = BuildResponsesResponse(responseId, "completed", created, msgId, fullText);
+            await WriteSseEventAsync(ctx, "response.completed",
+                JsonSerializer.Serialize(new OaiResponsesCompletedEvent("response.completed", seq++, completedResponse),
+                    OaiJsonContext.Default.OaiResponsesCompletedEvent), ct);
+        }
+        else
+        {
+            var chatResponse = await chatClient.GetResponseAsync(chatMessages, cancellationToken: ct);
+            var replyText    = chatResponse.Text ?? string.Empty;
+
+            var response = BuildResponsesResponse(
+                $"resp_{Guid.NewGuid():N}", "completed",
+                DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
+                $"msg_{Guid.NewGuid():N}", replyText);
+
+            ctx.Response.ContentType = "application/json";
+            await ctx.Response.WriteAsync(
+                JsonSerializer.Serialize(response, OaiJsonContext.Default.OaiResponsesResponse), ct);
+        }
+    }
+
+    private OaiResponsesResponse BuildResponsesResponse(
+        string responseId, string status, long createdAt, string msgId, string text)
+        => new(
+            Id:        responseId,
             Object:    "response",
-            Status:    "completed",
-            CreatedAt: DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
+            Status:    status,
+            CreatedAt: createdAt,
             Model:     agentId,
             Output:   [new OaiResponseOutputMessage(
                 Type:    "message",
-                Id:      $"msg_{Guid.NewGuid():N}",
+                Id:      msgId,
                 Role:    "assistant",
                 Content: [new OaiResponseOutputContent(
                     Type:        "output_text",
-                    Text:        replyText,
+                    Text:        text,
                     Annotations: [],
                     Logprobs:    [])])]);
 
-        ctx.Response.ContentType = "application/json";
-        await ctx.Response.WriteAsync(
-            JsonSerializer.Serialize(response, OaiJsonContext.Default.OaiResponsesResponse), ct);
+    private static async Task WriteSseEventAsync(HttpContext ctx, string eventName, string data, CancellationToken ct)
+    {
+        await ctx.Response.WriteAsync($"event: {eventName}\ndata: {data}\n\n", ct);
+        await ctx.Response.Body.FlushAsync(ct);
     }
 
     // Walks the input array (reverse order) to find the last user message text.

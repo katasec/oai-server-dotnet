@@ -45,6 +45,36 @@ public record OaiUsage(
     int TotalTokens);
 
 // ---------------------------------------------------------------------------
+// Outbound — /v1/responses streaming SSE events
+// Event format sourced from openai/openai-dotnet session records.
+
+public record OaiResponsesCreatedEvent(
+    string Type,
+    int SequenceNumber,
+    OaiResponsesResponse Response);
+
+public record OaiResponsesOutputTextDeltaEvent(
+    string Type,
+    int SequenceNumber,
+    string ItemId,
+    int OutputIndex,
+    int ContentIndex,
+    string Delta);
+
+public record OaiResponsesOutputTextDoneEvent(
+    string Type,
+    int SequenceNumber,
+    string ItemId,
+    int OutputIndex,
+    int ContentIndex,
+    string Text);
+
+public record OaiResponsesCompletedEvent(
+    string Type,
+    int SequenceNumber,
+    OaiResponsesResponse Response);
+
+// ---------------------------------------------------------------------------
 // Outbound — /v1/responses response
 
 public record OaiResponsesResponse(
