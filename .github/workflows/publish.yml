@@ -39,7 +39,8 @@ jobs:
         run: |
           dotnet nuget push ./nupkg/*.nupkg \
             --api-key ${{ secrets.GITHUB_TOKEN }} \
-            --source "https://nuget.pkg.github.com/katasec/index.json"
+            --source "https://nuget.pkg.github.com/katasec/index.json" \
+            --skip-duplicate
 
       - name: Tag and release
         env:
