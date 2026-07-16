@@ -279,6 +279,10 @@ public sealed class AnthropicServer(IChatClient chatClient, string modelId, ICha
     // Maps the wire request to provider-neutral chat messages, preserving block structure —
     // one AIContent per content block. Downstream consumers (e.g. forge's MissionChatClient)
     // rely on block boundaries surviving; do not flatten to a single string.
+    //
+    // Role fix-up: the Anthropic wire packs tool_result blocks into USER messages, but the
+    // M.E.AI convention (and the OpenAI wire) demands FunctionResultContent in TOOL-role
+    // messages directly after the assistant's tool call — providers 400 otherwise.
     public static List<ChatMessage> BuildChatHistory(AnthropicRequest req)
     {
         var messages = new List<ChatMessage>();
@@ -288,8 +292,14 @@ public sealed class AnthropicServer(IChatClient chatClient, string modelId, ICha
 
         foreach (var m in req.Messages)
         {
-            var role = m.Role == "user" ? ChatRole.User : ChatRole.Assistant;
-            messages.Add(new ChatMessage(role, BuildContents(m.Content)));
+            var role     = m.Role == "user" ? ChatRole.User : ChatRole.Assistant;
+            var contents = BuildContents(m.Content);
+
+            var toolResults = contents.OfType<FunctionResultContent>().Cast<AIContent>().ToList();
+            var rest        = contents.Where(c => c is not FunctionResultContent).ToList();
+
+            if (toolResults.Count > 0) messages.Add(new ChatMessage(ChatRole.Tool, toolResults));
+            if (rest.Count > 0)        messages.Add(new ChatMessage(role, rest));
         }
 
         return messages;
