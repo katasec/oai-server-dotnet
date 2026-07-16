@@ -66,10 +66,16 @@ public sealed class AnthropicServer(IChatClient chatClient, string modelId, ICha
     }
 
     // Tools ride in via ChatOptions (filtered to the essentials allowlist — see ToolMapping).
+    // The wire's model field rides along as ModelId so a multi-mission host can route by it
+    // (Phase 42.4); single-mission clients are free to ignore it.
     private static ChatOptions? BuildChatOptions(AnthropicRequest req)
     {
         var tools = ToolMapping.MapDeclaredTools(req);
-        return tools.Count > 0 ? new ChatOptions { Tools = tools } : null;
+        return new ChatOptions
+        {
+            ModelId = string.IsNullOrEmpty(req.Model) ? null : req.Model,
+            Tools   = tools.Count > 0 ? tools : null,
+        };
     }
 
     // Aux structured-output passthrough: the client demanded schema-shaped output

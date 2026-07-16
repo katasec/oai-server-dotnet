@@ -76,6 +76,10 @@ public sealed class OaiServer(IChatClient chatClient, ISessionStore sessionStore
 
         ctx.Response.Headers[SessionHeader] = sessionId;
 
+        // The wire's model field rides along as ModelId so a multi-mission host can route by it
+        // (Phase 42.4); single-mission clients are free to ignore it.
+        var chatOptions = string.IsNullOrEmpty(req.Model) ? null : new ChatOptions { ModelId = req.Model };
+
         if (req.Stream)
         {
             // --- Streaming SSE response
@@ -85,7 +89,7 @@ public sealed class OaiServer(IChatClient chatClient, ISessionStore sessionStore
             var fullReply = new StringBuilder();
             var firstChunk = true;
 
-            await foreach (var update in chatClient.GetStreamingResponseAsync(chatMessages, cancellationToken: ct))
+            await foreach (var update in chatClient.GetStreamingResponseAsync(chatMessages, chatOptions, cancellationToken: ct))
             {
                 var text = update.Text ?? string.Empty;
                 fullReply.Append(text);
@@ -127,7 +131,7 @@ public sealed class OaiServer(IChatClient chatClient, ISessionStore sessionStore
             // --- Non-streaming JSON response
             ctx.Response.ContentType = "application/json";
 
-            var chatResponse = await chatClient.GetResponseAsync(chatMessages, cancellationToken: ct);
+            var chatResponse = await chatClient.GetResponseAsync(chatMessages, chatOptions, cancellationToken: ct);
             var replyText    = chatResponse.Text ?? string.Empty;
 
             var completion = new OaiCompletion(
@@ -169,6 +173,13 @@ public sealed class OaiServer(IChatClient chatClient, ISessionStore sessionStore
         var isStreaming = root.TryGetProperty("stream", out var streamProp)
             && streamProp.ValueKind == JsonValueKind.True;
 
+        // Model → ModelId for multi-mission routing (Phase 42.4), as in HandleAsync.
+        var chatOptions = root.TryGetProperty("model", out var modelProp)
+            && modelProp.ValueKind == JsonValueKind.String
+            && modelProp.GetString() is { Length: > 0 } reqModel
+                ? new ChatOptions { ModelId = reqModel }
+                : null;
+
         var chatMessages = new List<ChatMessage> { new(ChatRole.User, userText) };
 
         if (isStreaming)
@@ -189,7 +200,7 @@ public sealed class OaiServer(IChatClient chatClient, ISessionStore sessionStore
                     OaiJsonContext.Default.OaiResponsesCreatedEvent), ct);
 
             // response.output_text.delta — one event per streaming chunk
-            await foreach (var update in chatClient.GetStreamingResponseAsync(chatMessages, cancellationToken: ct))
+            await foreach (var update in chatClient.GetStreamingResponseAsync(chatMessages, chatOptions, cancellationToken: ct))
             {
                 var delta = update.Text ?? string.Empty;
                 fullReply.Append(delta);
@@ -216,7 +227,7 @@ public sealed class OaiServer(IChatClient chatClient, ISessionStore sessionStore
         }
         else
         {
-            var chatResponse = await chatClient.GetResponseAsync(chatMessages, cancellationToken: ct);
+            var chatResponse = await chatClient.GetResponseAsync(chatMessages, chatOptions, cancellationToken: ct);
             var replyText    = chatResponse.Text ?? string.Empty;
 
             var response = BuildResponsesResponse(
