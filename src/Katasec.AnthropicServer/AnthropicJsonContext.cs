@@ -20,4 +20,4 @@ namespace Katasec.AnthropicServer;
 [JsonSerializable(typeof(AnthropicMessageDelta))]
 [JsonSerializable(typeof(AnthropicMessageDeltaPayload))]
 [JsonSerializable(typeof(AnthropicMessageStop))]
-internal partial class AnthropicJsonContext : JsonSerializerContext { }
+public partial class AnthropicJsonContext : JsonSerializerContext { }

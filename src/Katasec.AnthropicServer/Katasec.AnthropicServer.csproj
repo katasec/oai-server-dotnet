@@ -8,7 +8,7 @@
 
     <!-- NuGet -->
     <PackageId>Katasec.AnthropicServer</PackageId>
-    <Version>0.1.0</Version>
+    <Version>0.1.1</Version>
     <Authors>katasec</Authors>
     <Description>AOT-safe .NET Anthropic-compatible server — expose any IChatClient as a /v1/messages endpoint</Description>
     <PackageTags>anthropic;claude;messages;server;aot;native-aot</PackageTags>

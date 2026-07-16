@@ -13,6 +13,9 @@ public sealed class AnthropicServer(IChatClient chatClient, string modelId)
     // Registers /v1/messages on the given WebApplication
     public void Map(WebApplication app)
     {
+        // The claude CLI probes HEAD / before its first real request — answer 200, not 404.
+        app.MapMethods("/", ["HEAD", "GET"],
+            (RequestDelegate)(ctx => { ctx.Response.StatusCode = 200; return Task.CompletedTask; }));
         app.MapPost("/v1/messages",
             (RequestDelegate)(ctx => HandleAsync(ctx, ctx.RequestAborted)));
     }
@@ -131,20 +134,72 @@ public sealed class AnthropicServer(IChatClient chatClient, string modelId)
         await ctx.Response.Body.FlushAsync(ct);
     }
 
-    private static List<ChatMessage> BuildChatHistory(AnthropicRequest req)
+    // Maps the wire request to provider-neutral chat messages, preserving block structure —
+    // one AIContent per content block. Downstream consumers (e.g. forge's MissionChatClient)
+    // rely on block boundaries surviving; do not flatten to a single string.
+    public static List<ChatMessage> BuildChatHistory(AnthropicRequest req)
     {
         var messages = new List<ChatMessage>();
 
-        if (req.System.HasValue && req.System.Value.ValueKind != JsonValueKind.Undefined)
-            messages.Add(new ChatMessage(ChatRole.System, ExtractText(req.System.Value)));
+        if (req.System is { ValueKind: not (JsonValueKind.Undefined or JsonValueKind.Null) } system)
+            messages.Add(new ChatMessage(ChatRole.System, BuildContents(system)));
 
         foreach (var m in req.Messages)
         {
             var role = m.Role == "user" ? ChatRole.User : ChatRole.Assistant;
-            messages.Add(new ChatMessage(role, ExtractText(m.Content)));
+            messages.Add(new ChatMessage(role, BuildContents(m.Content)));
         }
 
         return messages;
+    }
+
+    // Content is a plain string or an array of typed blocks. Unknown block types are skipped
+    // (parse permissively — real clients send blocks our docs never mention).
+    private static List<AIContent> BuildContents(JsonElement content)
+    {
+        if (content.ValueKind == JsonValueKind.String)
+            return [new TextContent(content.GetString() ?? string.Empty)];
+
+        var parts = new List<AIContent>();
+        if (content.ValueKind != JsonValueKind.Array) return parts;
+
+        foreach (var block in content.EnumerateArray())
+        {
+            if (!block.TryGetProperty("type", out var type)) continue;
+            switch (type.GetString())
+            {
+                case "text" when block.TryGetProperty("text", out var text):
+                    parts.Add(new TextContent(text.GetString() ?? string.Empty));
+                    break;
+                case "tool_use":
+                    parts.Add(BuildToolUse(block));
+                    break;
+                case "tool_result":
+                    parts.Add(BuildToolResult(block));
+                    break;
+            }
+        }
+        return parts;
+    }
+
+    private static FunctionCallContent BuildToolUse(JsonElement block)
+    {
+        var id   = block.TryGetProperty("id", out var idEl)     ? idEl.GetString()   ?? string.Empty : string.Empty;
+        var name = block.TryGetProperty("name", out var nameEl) ? nameEl.GetString() ?? string.Empty : string.Empty;
+
+        var args = new Dictionary<string, object?>();
+        if (block.TryGetProperty("input", out var input) && input.ValueKind == JsonValueKind.Object)
+            foreach (var prop in input.EnumerateObject())
+                args[prop.Name] = prop.Value; // JsonElement — the consumer deserializes
+
+        return new FunctionCallContent(id, name, args);
+    }
+
+    private static FunctionResultContent BuildToolResult(JsonElement block)
+    {
+        var id = block.TryGetProperty("tool_use_id", out var idEl) ? idEl.GetString() ?? string.Empty : string.Empty;
+        object? result = block.TryGetProperty("content", out var content) ? ExtractText(content) : null;
+        return new FunctionResultContent(id, result);
     }
 
     // Content can be a plain string or an array of typed content blocks
