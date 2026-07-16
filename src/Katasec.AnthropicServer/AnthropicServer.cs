@@ -8,7 +8,11 @@ using Microsoft.Extensions.Logging;
 
 namespace Katasec.AnthropicServer;
 
-public sealed class AnthropicServer(IChatClient chatClient, string modelId)
+// chatClient answers MISSION requests (the user's task). auxClient answers AUX requests —
+// client housekeeping like the claude CLI's title-gen and state-check calls — by passthrough
+// to a plain provider model; the mission NEVER runs for those (Phase 42.3 §0). When no
+// auxClient is supplied, aux requests get a minimal canned reply instead of billing the mission.
+public sealed class AnthropicServer(IChatClient chatClient, string modelId, IChatClient? auxClient = null)
 {
     // Registers /v1/messages on the given WebApplication
     public void Map(WebApplication app)
@@ -31,15 +35,23 @@ public sealed class AnthropicServer(IChatClient chatClient, string modelId)
 
             if (req is null) { ctx.Response.StatusCode = 400; return; }
 
+            // Classify FIRST (42.3 §0): aux requests dispatch to passthrough; the mission never runs.
+            var kind = RequestClassifier.Classify(req);
+            var (client, chatOptions) = kind switch
+            {
+                RequestKind.Mission             => (chatClient, BuildChatOptions(req)),
+                RequestKind.AuxStructuredOutput => (auxClient ?? Canned("{}"), AuxFormatOptions(req)),
+                _                               => (auxClient ?? Canned("ok"), null),
+            };
+
             var chatMessages = BuildChatHistory(req);
-            var chatOptions  = BuildChatOptions(req);
             var messageId    = $"msg_{Guid.NewGuid():N}";
             var model        = string.IsNullOrEmpty(req.Model) ? modelId : req.Model;
 
             if (req.Stream)
-                await HandleStreamingAsync(ctx, chatMessages, chatOptions, messageId, model, ct);
+                await HandleStreamingAsync(ctx, client, chatMessages, chatOptions, messageId, model, ct);
             else
-                await HandleNonStreamingAsync(ctx, chatMessages, chatOptions, messageId, model, ct);
+                await HandleNonStreamingAsync(ctx, client, chatMessages, chatOptions, messageId, model, ct);
         }
         catch (Exception ex)
         {
@@ -60,8 +72,43 @@ public sealed class AnthropicServer(IChatClient chatClient, string modelId)
         return tools.Count > 0 ? new ChatOptions { Tools = tools } : null;
     }
 
-    private async Task HandleNonStreamingAsync(
+    // Aux structured-output passthrough: the client demanded schema-shaped output
+    // (output_config.format.schema) — forward the schema so the provider honours it.
+    private static ChatOptions? AuxFormatOptions(AnthropicRequest req)
+    {
+        if (req.OutputConfig is not { ValueKind: JsonValueKind.Object } config
+            || !config.TryGetProperty("format", out var format)
+            || !format.TryGetProperty("schema", out var schema))
+            return null;
+
+        return new ChatOptions { ResponseFormat = ChatResponseFormat.ForJsonSchema(schema, "aux_output") };
+    }
+
+    private static IChatClient Canned(string text) => new CannedChatClient(text);
+
+    // Fallback aux answers when no auxClient is configured: schema requests get an empty
+    // object, plain housekeeping gets "ok" — never the mission, never a crash.
+    private sealed class CannedChatClient(string text) : IChatClient
+    {
+        public Task<ChatResponse> GetResponseAsync(
+            IEnumerable<ChatMessage> messages, ChatOptions? options = null, CancellationToken ct = default)
+            => Task.FromResult(new ChatResponse([new ChatMessage(ChatRole.Assistant, text)]));
+
+        public async IAsyncEnumerable<ChatResponseUpdate> GetStreamingResponseAsync(
+            IEnumerable<ChatMessage> messages, ChatOptions? options = null,
+            [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken ct = default)
+        {
+            await Task.CompletedTask;
+            yield return new ChatResponseUpdate(ChatRole.Assistant, text);
+        }
+
+        public void Dispose() { }
+        public object? GetService(Type serviceType, object? key = null) => null;
+    }
+
+    private static async Task HandleNonStreamingAsync(
         HttpContext ctx,
+        IChatClient client,
         List<ChatMessage> chatMessages,
         ChatOptions? chatOptions,
         string messageId,
@@ -70,7 +117,7 @@ public sealed class AnthropicServer(IChatClient chatClient, string modelId)
     {
         ctx.Response.ContentType = "application/json";
 
-        var chatResponse = await chatClient.GetResponseAsync(chatMessages, chatOptions, cancellationToken: ct);
+        var chatResponse = await client.GetResponseAsync(chatMessages, chatOptions, cancellationToken: ct);
         var (blocks, stopReason) = BuildResponseBlocks(chatResponse);
 
         var response = new AnthropicResponse
@@ -142,8 +189,9 @@ public sealed class AnthropicServer(IChatClient chatClient, string modelId)
         return doc.RootElement.Clone();
     }
 
-    private async Task HandleStreamingAsync(
+    private static async Task HandleStreamingAsync(
         HttpContext ctx,
+        IChatClient client,
         List<ChatMessage> chatMessages,
         ChatOptions? chatOptions,
         string messageId,
@@ -164,7 +212,7 @@ public sealed class AnthropicServer(IChatClient chatClient, string modelId)
 
         // Use non-streaming to get clean extracted text from the pipeline.
         // Streaming from IChatClient yields raw StepEnvelope JSON tokens, not plain text.
-        var chatResponse = await chatClient.GetResponseAsync(chatMessages, chatOptions, cancellationToken: ct);
+        var chatResponse = await client.GetResponseAsync(chatMessages, chatOptions, cancellationToken: ct);
         var (blocks, stopReason) = BuildResponseBlocks(chatResponse);
 
         var outputTokens = 0;
@@ -318,9 +366,9 @@ public sealed class AnthropicServer(IChatClient chatClient, string modelId)
     }
 
     // Convenience: build and start a server from just an IChatClient
-    public static WebApplication Build(IChatClient chatClient, string modelId, int port)
+    public static WebApplication Build(IChatClient chatClient, string modelId, int port, IChatClient? auxClient = null)
     {
-        var server  = new AnthropicServer(chatClient, modelId);
+        var server  = new AnthropicServer(chatClient, modelId, auxClient);
         var builder = WebApplication.CreateSlimBuilder();
 
         builder.Services.ConfigureHttpJsonOptions(o =>
