@@ -32,13 +32,14 @@ public sealed class AnthropicServer(IChatClient chatClient, string modelId)
             if (req is null) { ctx.Response.StatusCode = 400; return; }
 
             var chatMessages = BuildChatHistory(req);
+            var chatOptions  = BuildChatOptions(req);
             var messageId    = $"msg_{Guid.NewGuid():N}";
             var model        = string.IsNullOrEmpty(req.Model) ? modelId : req.Model;
 
             if (req.Stream)
-                await HandleStreamingAsync(ctx, chatMessages, messageId, model, ct);
+                await HandleStreamingAsync(ctx, chatMessages, chatOptions, messageId, model, ct);
             else
-                await HandleNonStreamingAsync(ctx, chatMessages, messageId, model, ct);
+                await HandleNonStreamingAsync(ctx, chatMessages, chatOptions, messageId, model, ct);
         }
         catch (Exception ex)
         {
@@ -52,33 +53,99 @@ public sealed class AnthropicServer(IChatClient chatClient, string modelId)
         }
     }
 
+    // Tools ride in via ChatOptions (filtered to the essentials allowlist — see ToolMapping).
+    private static ChatOptions? BuildChatOptions(AnthropicRequest req)
+    {
+        var tools = ToolMapping.MapDeclaredTools(req);
+        return tools.Count > 0 ? new ChatOptions { Tools = tools } : null;
+    }
+
     private async Task HandleNonStreamingAsync(
         HttpContext ctx,
         List<ChatMessage> chatMessages,
+        ChatOptions? chatOptions,
         string messageId,
         string model,
         CancellationToken ct)
     {
         ctx.Response.ContentType = "application/json";
 
-        var chatResponse = await chatClient.GetResponseAsync(chatMessages, cancellationToken: ct);
-        var replyText    = chatResponse.Text ?? string.Empty;
+        var chatResponse = await chatClient.GetResponseAsync(chatMessages, chatOptions, cancellationToken: ct);
+        var (blocks, stopReason) = BuildResponseBlocks(chatResponse);
 
         var response = new AnthropicResponse
         {
-            Id      = messageId,
-            Model   = model,
-            Content = [new AnthropicContentBlock { Text = replyText }],
-            Usage   = new AnthropicUsage(),
+            Id         = messageId,
+            Model      = model,
+            Content    = blocks,
+            StopReason = stopReason,
+            Usage      = new AnthropicUsage(),
         };
 
         await ctx.Response.WriteAsync(
             JsonSerializer.Serialize(response, AnthropicJsonContext.Default.AnthropicResponse), ct);
     }
 
+    // The model's reply → Anthropic content blocks. A FunctionCallContent becomes a tool_use
+    // block (stop_reason "tool_use") the CLIENT will execute; text stays a text block.
+    private static (List<AnthropicContentBlock> Blocks, string StopReason) BuildResponseBlocks(ChatResponse chatResponse)
+    {
+        var blocks = new List<AnthropicContentBlock>();
+
+        var contents = chatResponse.Messages.LastOrDefault()?.Contents ?? [];
+        foreach (var part in contents)
+        {
+            switch (part)
+            {
+                case TextContent text when !string.IsNullOrEmpty(text.Text):
+                    blocks.Add(new AnthropicContentBlock { Type = "text", Text = text.Text });
+                    break;
+                case FunctionCallContent call:
+                    blocks.Add(new AnthropicContentBlock
+                    {
+                        Type  = "tool_use",
+                        Text  = null,
+                        Id    = call.CallId,
+                        Name  = call.Name,
+                        Input = SerializeArguments(call.Arguments),
+                    });
+                    break;
+            }
+        }
+
+        // Legacy shape: some IChatClients surface only .Text — keep the single-text-block path.
+        if (blocks.Count == 0)
+            blocks.Add(new AnthropicContentBlock { Type = "text", Text = chatResponse.Text ?? string.Empty });
+
+        var stopReason = blocks.Any(b => b.Type == "tool_use") ? "tool_use" : "end_turn";
+        return (blocks, stopReason);
+    }
+
+    // AOT-safe argument serialization: values are JsonElement when they came off a wire
+    // (ours or the provider's); anything else falls back to its string form.
+    private static JsonElement SerializeArguments(IDictionary<string, object?>? arguments)
+    {
+        using var stream = new MemoryStream();
+        using (var writer = new Utf8JsonWriter(stream))
+        {
+            writer.WriteStartObject();
+            foreach (var (key, value) in arguments ?? new Dictionary<string, object?>())
+            {
+                writer.WritePropertyName(key);
+                if (value is JsonElement element) element.WriteTo(writer);
+                else if (value is null)           writer.WriteNullValue();
+                else                              writer.WriteStringValue(value.ToString());
+            }
+            writer.WriteEndObject();
+        }
+        using var doc = JsonDocument.Parse(stream.ToArray());
+        return doc.RootElement.Clone();
+    }
+
     private async Task HandleStreamingAsync(
         HttpContext ctx,
         List<ChatMessage> chatMessages,
+        ChatOptions? chatOptions,
         string messageId,
         string model,
         CancellationToken ct)
@@ -92,41 +159,68 @@ public sealed class AnthropicServer(IChatClient chatClient, string modelId)
                 Message = new AnthropicMessageStartPayload { Id = messageId, Model = model }
             }, AnthropicJsonContext.Default.AnthropicMessageStart), ct);
 
-        await WriteEventAsync(ctx, "content_block_start",
-            JsonSerializer.Serialize(new AnthropicContentBlockStart
-            {
-                ContentBlock = new AnthropicContentBlock { Text = string.Empty }
-            }, AnthropicJsonContext.Default.AnthropicContentBlockStart), ct);
-
         await WriteEventAsync(ctx, "ping",
             JsonSerializer.Serialize(new AnthropicPing(), AnthropicJsonContext.Default.AnthropicPing), ct);
 
         // Use non-streaming to get clean extracted text from the pipeline.
         // Streaming from IChatClient yields raw StepEnvelope JSON tokens, not plain text.
-        var chatResponse = await chatClient.GetResponseAsync(chatMessages, cancellationToken: ct);
-        var replyText    = chatResponse.Text ?? string.Empty;
-        var outputTokens = replyText.Length;
+        var chatResponse = await chatClient.GetResponseAsync(chatMessages, chatOptions, cancellationToken: ct);
+        var (blocks, stopReason) = BuildResponseBlocks(chatResponse);
 
-        if (!string.IsNullOrEmpty(replyText))
-            await WriteEventAsync(ctx, "content_block_delta",
-                JsonSerializer.Serialize(new AnthropicContentBlockDelta
-                {
-                    Delta = new AnthropicTextDelta { Text = replyText }
-                }, AnthropicJsonContext.Default.AnthropicContentBlockDelta), ct);
-
-        await WriteEventAsync(ctx, "content_block_stop",
-            JsonSerializer.Serialize(new AnthropicContentBlockStop(), AnthropicJsonContext.Default.AnthropicContentBlockStop), ct);
+        var outputTokens = 0;
+        for (var index = 0; index < blocks.Count; index++)
+            outputTokens += await StreamBlockAsync(ctx, blocks[index], index, ct);
 
         await WriteEventAsync(ctx, "message_delta",
             JsonSerializer.Serialize(new AnthropicMessageDelta
             {
-                Delta = new AnthropicMessageDeltaPayload(),
+                Delta = new AnthropicMessageDeltaPayload { StopReason = stopReason },
                 Usage = new AnthropicUsage { OutputTokens = outputTokens },
             }, AnthropicJsonContext.Default.AnthropicMessageDelta), ct);
 
         await WriteEventAsync(ctx, "message_stop",
             JsonSerializer.Serialize(new AnthropicMessageStop(), AnthropicJsonContext.Default.AnthropicMessageStop), ct);
     }
+
+    // One content block as the start/delta/stop SSE triple. Text blocks delta the text;
+    // tool_use blocks start with empty input and deliver the arguments as one input_json_delta.
+    private static async Task<int> StreamBlockAsync(HttpContext ctx, AnthropicContentBlock block, int index, CancellationToken ct)
+    {
+        var isToolUse  = block.Type == "tool_use";
+        var startBlock = isToolUse
+            ? new AnthropicContentBlock { Type = "tool_use", Text = null, Id = block.Id, Name = block.Name, Input = EmptyObject }
+            : new AnthropicContentBlock { Type = "text", Text = string.Empty };
+
+        await WriteEventAsync(ctx, "content_block_start",
+            JsonSerializer.Serialize(new AnthropicContentBlockStart
+            {
+                Index        = index,
+                ContentBlock = startBlock,
+            }, AnthropicJsonContext.Default.AnthropicContentBlockStart), ct);
+
+        var payload = isToolUse
+            ? JsonSerializer.Serialize(new AnthropicContentBlockToolDelta
+              {
+                  Index = index,
+                  Delta = new AnthropicInputJsonDelta { PartialJson = block.Input?.GetRawText() ?? "{}" },
+              }, AnthropicJsonContext.Default.AnthropicContentBlockToolDelta)
+            : JsonSerializer.Serialize(new AnthropicContentBlockDelta
+              {
+                  Index = index,
+                  Delta = new AnthropicTextDelta { Text = block.Text ?? string.Empty },
+              }, AnthropicJsonContext.Default.AnthropicContentBlockDelta);
+
+        if (isToolUse || !string.IsNullOrEmpty(block.Text))
+            await WriteEventAsync(ctx, "content_block_delta", payload, ct);
+
+        await WriteEventAsync(ctx, "content_block_stop",
+            JsonSerializer.Serialize(new AnthropicContentBlockStop { Index = index },
+                AnthropicJsonContext.Default.AnthropicContentBlockStop), ct);
+
+        return block.Text?.Length ?? block.Input?.GetRawText().Length ?? 0;
+    }
+
+    private static readonly JsonElement EmptyObject = JsonDocument.Parse("{}").RootElement;
 
     private static async Task WriteEventAsync(HttpContext ctx, string eventName, string data, CancellationToken ct)
     {

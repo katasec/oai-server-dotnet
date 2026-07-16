@@ -91,13 +91,28 @@ public sealed class AnthropicResponse
     public AnthropicUsage Usage { get; set; } = new();
 }
 
+// A response content block: text ({type, text}) or tool_use ({type, id, name, input}).
+// Null members are omitted on the wire, so one class covers both shapes AOT-safely.
 public sealed class AnthropicContentBlock
 {
     [JsonPropertyName("type")]
     public string Type { get; set; } = "text";
 
     [JsonPropertyName("text")]
-    public string Text { get; set; } = string.Empty;
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? Text { get; set; } = string.Empty;
+
+    [JsonPropertyName("id")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? Id { get; set; }
+
+    [JsonPropertyName("name")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? Name { get; set; }
+
+    [JsonPropertyName("input")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public JsonElement? Input { get; set; }
 }
 
 public sealed class AnthropicUsage
@@ -185,6 +200,28 @@ public sealed class AnthropicTextDelta
 
     [JsonPropertyName("text")]
     public string Text { get; set; } = string.Empty;
+}
+
+// content_block_delta carrying a tool_use block's arguments as partial JSON.
+public sealed class AnthropicContentBlockToolDelta
+{
+    [JsonPropertyName("type")]
+    public string Type { get; set; } = "content_block_delta";
+
+    [JsonPropertyName("index")]
+    public int Index { get; set; }
+
+    [JsonPropertyName("delta")]
+    public AnthropicInputJsonDelta Delta { get; set; } = new();
+}
+
+public sealed class AnthropicInputJsonDelta
+{
+    [JsonPropertyName("type")]
+    public string Type { get; set; } = "input_json_delta";
+
+    [JsonPropertyName("partial_json")]
+    public string PartialJson { get; set; } = string.Empty;
 }
 
 public sealed class AnthropicContentBlockStop

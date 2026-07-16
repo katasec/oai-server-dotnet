@@ -18,6 +18,8 @@ namespace Katasec.AnthropicServer;
 [JsonSerializable(typeof(AnthropicPing))]
 [JsonSerializable(typeof(AnthropicContentBlockDelta))]
 [JsonSerializable(typeof(AnthropicTextDelta))]
+[JsonSerializable(typeof(AnthropicContentBlockToolDelta))]
+[JsonSerializable(typeof(AnthropicInputJsonDelta))]
 [JsonSerializable(typeof(AnthropicContentBlockStop))]
 [JsonSerializable(typeof(AnthropicMessageDelta))]
 [JsonSerializable(typeof(AnthropicMessageDeltaPayload))]
