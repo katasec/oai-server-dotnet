@@ -6,6 +6,8 @@ namespace Katasec.AnthropicServer;
 [JsonSerializable(typeof(AnthropicRequest))]
 [JsonSerializable(typeof(AnthropicMessage))]
 [JsonSerializable(typeof(List<AnthropicMessage>))]
+[JsonSerializable(typeof(AnthropicToolDefinition))]
+[JsonSerializable(typeof(List<AnthropicToolDefinition>))]
 [JsonSerializable(typeof(AnthropicResponse))]
 [JsonSerializable(typeof(AnthropicContentBlock))]
 [JsonSerializable(typeof(List<AnthropicContentBlock>))]

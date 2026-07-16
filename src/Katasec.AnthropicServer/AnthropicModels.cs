@@ -23,6 +23,32 @@ public sealed class AnthropicRequest
 
     [JsonPropertyName("stream")]
     public bool Stream { get; set; }
+
+    // Tool declarations the client offers the model. The server is a relay: these are
+    // forwarded (filtered) to the model; the CLIENT executes whatever the model calls.
+    [JsonPropertyName("tools")]
+    public List<AnthropicToolDefinition> Tools { get; set; } = [];
+
+    // Extended-thinking config. Structural classifier signal (Phase 42.3): the claude CLI
+    // always sends it — adaptive on real turns, disabled on housekeeping calls.
+    [JsonPropertyName("thinking")]
+    public JsonElement? Thinking { get; set; }
+
+    // Structured-output demand (e.g. the CLI's title-gen {title} schema) — classifier signal.
+    [JsonPropertyName("output_config")]
+    public JsonElement? OutputConfig { get; set; }
+}
+
+public sealed class AnthropicToolDefinition
+{
+    [JsonPropertyName("name")]
+    public string Name { get; set; } = string.Empty;
+
+    [JsonPropertyName("description")]
+    public string? Description { get; set; }
+
+    [JsonPropertyName("input_schema")]
+    public JsonElement InputSchema { get; set; }
 }
 
 // Content is string or array of content blocks — kept as JsonElement for AOT safety
