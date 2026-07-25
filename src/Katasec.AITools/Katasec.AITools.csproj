@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <IsAotCompatible>true</IsAotCompatible>
+
+    <!-- NuGet -->
+    <PackageId>Katasec.AITools</PackageId>
+    <Version>0.1.0</Version>
+    <Authors>katasec</Authors>
+    <Description>AOT-safe, declaration-only Microsoft.Extensions.AI tool wrappers — a static AITool with no server-side execution. Shared by wire relays (Katasec.AnthropicServer) and in-process agentic loops.</Description>
+    <PackageTags>ai;tools;function-calling;aot;native-aot</PackageTags>
+    <GeneratePackageOnBuild>false</GeneratePackageOnBuild>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.AI.Abstractions" Version="9.5.0" />
+  </ItemGroup>
+
+</Project>

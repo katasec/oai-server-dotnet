@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Katasec.AITools;
 using Microsoft.Extensions.AI;
 
 namespace Katasec.AnthropicServer;
@@ -13,14 +14,15 @@ public static class ToolMapping
     // is never forwarded: safety (no Gmail-write emission), privacy (connector inventory stays
     // client-side), cost (~28KB of schemas otherwise ride every call), capability (4 well-chosen
     // tools beat 57 alien schemas). Outbound needs no filter: the model can only call what it saw.
-    public static readonly IReadOnlySet<string> EssentialTools =
-        new HashSet<string>(StringComparer.Ordinal) { "Read", "Edit", "Write", "Bash" };
+    // Shared with any in-process agentic loop via Katasec.AITools.CodingTools — one list, not two.
+    public static readonly IReadOnlySet<string> EssentialTools = CodingTools.EssentialNames;
 
-    // Inbound declarations → M.E.AI tools, filtered to the essentials.
+    // Inbound declarations → M.E.AI tools, filtered to the essentials. DeclaredTool (Katasec.AITools)
+    // is a declaration-only relay: it carries the client's schema verbatim and is never invoked here.
     public static List<AITool> MapDeclaredTools(AnthropicRequest request)
         => request.Tools
             .Where(t => EssentialTools.Contains(t.Name))
-            .Select(AITool (t) => new DeclaredTool(t))
+            .Select(AITool (t) => new DeclaredTool(t.Name, t.Description ?? string.Empty, t.InputSchema))
             .ToList();
 
     // A tool continuation is a request whose last message ends in a tool_result block —
@@ -37,18 +39,4 @@ public static class ToolMapping
             && b.TryGetProperty("type", out var type)
             && type.GetString() == "tool_result";
     }
-}
-
-// Declaration-only relay tool: carries the client's name/description/input_schema to the
-// provider verbatim. Never invoked server-side — the CLIENT executes tools.
-internal sealed class DeclaredTool(AnthropicToolDefinition definition) : AIFunction
-{
-    public override string Name => definition.Name;
-    public override string Description => definition.Description ?? string.Empty;
-    public override JsonElement JsonSchema => definition.InputSchema;
-
-    protected override ValueTask<object?> InvokeCoreAsync(
-        AIFunctionArguments arguments, CancellationToken cancellationToken)
-        => throw new NotSupportedException(
-            "The server is a relay — tools are executed by the client, never server-side.");
 }

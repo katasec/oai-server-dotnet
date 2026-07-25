@@ -20,4 +20,8 @@
     <PackageReference Include="Microsoft.Extensions.AI.Abstractions" Version="9.5.0" />
   </ItemGroup>
 
+  <ItemGroup>
+    <ProjectReference Include="..\Katasec.AITools\Katasec.AITools.csproj" />
+  </ItemGroup>
+
 </Project>
