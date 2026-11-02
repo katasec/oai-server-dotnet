@@ -21,6 +21,7 @@
   </ItemGroup>
 
   <ItemGroup>
+    <ProjectReference Include="..\Katasec.Anthropic.Models\Katasec.Anthropic.Models.csproj" />
     <ProjectReference Include="..\Katasec.AITools\Katasec.AITools.csproj" />
   </ItemGroup>
 

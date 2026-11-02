@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Katasec.Anthropic.Models;
 
 namespace Katasec.AnthropicServer;
 
@@ -25,7 +26,7 @@ public static class RequestClassifier
 {
     public static RequestKind Classify(AnthropicRequest request)
     {
-        if (request.Tools.Count > 0) return RequestKind.Mission;
+        if (request.Tools is { Count: > 0 }) return RequestKind.Mission;
 
         if (HasOutputFormat(request))    return RequestKind.AuxStructuredOutput;
         if (ThinkingDisabled(request))   return RequestKind.AuxHousekeeping;

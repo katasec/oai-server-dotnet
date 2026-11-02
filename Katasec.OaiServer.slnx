@@ -3,8 +3,10 @@
     <Project Path="src/Katasec.OaiServer/Katasec.OaiServer.csproj" />
     <Project Path="src/Katasec.AnthropicServer/Katasec.AnthropicServer.csproj" />
     <Project Path="src/Katasec.AITools/Katasec.AITools.csproj" />
+    <Project Path="src/Katasec.Anthropic.Models/Katasec.Anthropic.Models.csproj" />
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/Katasec.OaiServer.Tests/Katasec.OaiServer.Tests.csproj" />
+    <Project Path="tests/Katasec.AnthropicServer.Tests/Katasec.AnthropicServer.Tests.csproj" />
   </Folder>
 </Solution>

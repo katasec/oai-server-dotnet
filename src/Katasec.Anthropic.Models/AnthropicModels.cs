@@ -1,10 +1,10 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
-namespace Katasec.AnthropicServer;
+namespace Katasec.Anthropic.Models;
 
 // ---------------------------------------------------------------------------
-// Inbound — /v1/messages request
+// Request — /v1/messages
 
 public sealed class AnthropicRequest
 {
@@ -16,6 +16,7 @@ public sealed class AnthropicRequest
 
     // system can be a string or an array of content blocks in newer API versions
     [JsonPropertyName("system")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public JsonElement? System { get; set; }
 
     [JsonPropertyName("max_tokens")]
@@ -24,19 +25,56 @@ public sealed class AnthropicRequest
     [JsonPropertyName("stream")]
     public bool Stream { get; set; }
 
-    // Tool declarations the client offers the model. The server is a relay: these are
-    // forwarded (filtered) to the model; the CLIENT executes whatever the model calls.
+    // Tool declarations the client offers the model; null means no tools. The server is a relay:
+    // these are forwarded (filtered) to the model; the CLIENT executes whatever the model calls.
     [JsonPropertyName("tools")]
-    public List<AnthropicToolDefinition> Tools { get; set; } = [];
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public List<AnthropicToolDefinition>? Tools { get; set; }
+
+    [JsonPropertyName("tool_choice")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public AnthropicToolChoice? ToolChoice { get; set; }
+
+    [JsonPropertyName("stop_sequences")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public List<string>? StopSequences { get; set; }
+
+    [JsonPropertyName("temperature")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public float? Temperature { get; set; }
+
+    [JsonPropertyName("top_p")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public float? TopP { get; set; }
+
+    [JsonPropertyName("top_k")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public int? TopK { get; set; }
 
     // Extended-thinking config. Structural classifier signal (Phase 42.3): the claude CLI
     // always sends it — adaptive on real turns, disabled on housekeeping calls.
     [JsonPropertyName("thinking")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public JsonElement? Thinking { get; set; }
 
     // Structured-output demand (e.g. the CLI's title-gen {title} schema) — classifier signal.
     [JsonPropertyName("output_config")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public JsonElement? OutputConfig { get; set; }
+}
+
+public sealed class AnthropicToolChoice
+{
+    [JsonPropertyName("type")]
+    public string Type { get; set; } = "auto";
+
+    [JsonPropertyName("name")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? Name { get; set; }
+
+    [JsonPropertyName("disable_parallel_tool_use")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public bool? DisableParallelToolUse { get; set; }
 }
 
 public sealed class AnthropicToolDefinition
@@ -62,7 +100,7 @@ public sealed class AnthropicMessage
 }
 
 // ---------------------------------------------------------------------------
-// Outbound — non-streaming /v1/messages response
+// Response — non-streaming /v1/messages
 
 public sealed class AnthropicResponse
 {
@@ -92,7 +130,8 @@ public sealed class AnthropicResponse
 }
 
 // A response content block: text ({type, text}) or tool_use ({type, id, name, input}).
-// Null members are omitted on the wire, so one class covers both shapes AOT-safely.
+// On the request side it is also a tool_result ({type, tool_use_id, content, is_error}).
+// Null members are omitted on the wire, so one class covers every shape AOT-safely.
 public sealed class AnthropicContentBlock
 {
     [JsonPropertyName("type")]
@@ -113,6 +152,19 @@ public sealed class AnthropicContentBlock
     [JsonPropertyName("input")]
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public JsonElement? Input { get; set; }
+
+    [JsonPropertyName("tool_use_id")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? ToolUseId { get; set; }
+
+    // tool_result content: a string or an array of content blocks.
+    [JsonPropertyName("content")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public JsonElement? Content { get; set; }
+
+    [JsonPropertyName("is_error")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public bool? IsError { get; set; }
 }
 
 public sealed class AnthropicUsage
@@ -122,10 +174,18 @@ public sealed class AnthropicUsage
 
     [JsonPropertyName("output_tokens")]
     public int OutputTokens { get; set; }
+
+    [JsonPropertyName("cache_creation_input_tokens")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public int? CacheCreationInputTokens { get; set; }
+
+    [JsonPropertyName("cache_read_input_tokens")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public int? CacheReadInputTokens { get; set; }
 }
 
 // ---------------------------------------------------------------------------
-// Outbound — streaming SSE events
+// Response — streaming SSE events
 
 public sealed class AnthropicMessageStart
 {
@@ -258,4 +318,26 @@ public sealed class AnthropicMessageStop
 {
     [JsonPropertyName("type")]
     public string Type { get; set; } = "message_stop";
+}
+
+// ---------------------------------------------------------------------------
+// Response — errors
+
+// Both the non-2xx body and the SSE `event: error` data: {"type":"error","error":{"type","message"}}.
+public sealed class AnthropicErrorResponse
+{
+    [JsonPropertyName("type")]
+    public string Type { get; set; } = "error";
+
+    [JsonPropertyName("error")]
+    public AnthropicErrorDetail Error { get; set; } = new();
+}
+
+public sealed class AnthropicErrorDetail
+{
+    [JsonPropertyName("type")]
+    public string Type { get; set; } = string.Empty;
+
+    [JsonPropertyName("message")]
+    public string Message { get; set; } = string.Empty;
 }
