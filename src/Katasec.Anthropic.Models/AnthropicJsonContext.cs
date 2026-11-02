@@ -1,6 +1,6 @@
 using System.Text.Json.Serialization;
 
-namespace Katasec.AnthropicServer;
+namespace Katasec.Anthropic.Models;
 
 [JsonSerializable(typeof(System.Text.Json.JsonElement))]
 [JsonSerializable(typeof(AnthropicRequest))]
@@ -24,4 +24,8 @@ namespace Katasec.AnthropicServer;
 [JsonSerializable(typeof(AnthropicMessageDelta))]
 [JsonSerializable(typeof(AnthropicMessageDeltaPayload))]
 [JsonSerializable(typeof(AnthropicMessageStop))]
+[JsonSerializable(typeof(AnthropicToolChoice))]
+[JsonSerializable(typeof(AnthropicErrorResponse))]
+[JsonSerializable(typeof(AnthropicErrorDetail))]
+[JsonSerializable(typeof(List<string>))]
 public partial class AnthropicJsonContext : JsonSerializerContext { }

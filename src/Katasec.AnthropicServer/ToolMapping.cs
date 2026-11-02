@@ -1,5 +1,6 @@
 using System.Text.Json;
 using Katasec.AITools;
+using Katasec.Anthropic.Models;
 using Microsoft.Extensions.AI;
 
 namespace Katasec.AnthropicServer;
@@ -20,7 +21,7 @@ public static class ToolMapping
     // Inbound declarations → M.E.AI tools, filtered to the essentials. DeclaredTool (Katasec.AITools)
     // is a declaration-only relay: it carries the client's schema verbatim and is never invoked here.
     public static List<AITool> MapDeclaredTools(AnthropicRequest request)
-        => request.Tools
+        => (request.Tools ?? [])
             .Where(t => EssentialTools.Contains(t.Name))
             .Select(AITool (t) => new DeclaredTool(t.Name, t.Description ?? string.Empty, t.InputSchema))
             .ToList();
